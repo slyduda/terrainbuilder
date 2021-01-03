@@ -1,5 +1,7 @@
 from numpy import ones
 
+# TODO. I can change these to zeros too to make plates set crust function easier
+
 
 class HeightMap(ones):
     '''
@@ -12,9 +14,9 @@ class HeightMap(ones):
                 self.__name__)
         self.width = x
         self.height = y
-        super().__init__((x, y), dtype=float)
+        super().__init__((x, y), dtype=int)
 
-    def set_all(self, v: float):
+    def set_all(self, v: int):
         for x in range(self.length):
             for y in range(x.length):
                 self[x, y] = v

@@ -75,6 +75,60 @@ class Rectangle(object):
         self.top = top
         self.bottom = bottom
 
+    def get_map_index(self, px: int, py: int):
+        x = px % self.wd.get_width()
+        y = py % self.wd.get_height()
+
+        ilft = self.left
+        itop = self.top
+        irgt = self.right + (self.wd.get_width()
+                             if self.right < self.left else 0)
+        ibtm = self.bottom + (self.wd.get_height()
+                              if self.bottom < self.top else 0)
+        width = irgt - ilft
+
+        if width < 0:
+            raise Exception("Failed because width is less than zero")
+
+        xOkA = (x >= ilft) and (x < irgt)
+        xOkB = (x + self.wd.get_width() >=
+                ilft) and (x + self.wd.get_width() < irgt)
+        xOk = xOkA or xOkB
+
+        yOkA = (y >= itop) and (y < ibtm)
+        yOkB = (y + self.wd.get_height() >=
+                itop) and (y + self.wd.get_height() < ibtm)
+        yOk = yOkA or yOkB
+
+        x += self.wd.get_width() if (x < ilft) else 0
+        y += self.wd.get_height() if (y < itop) else 0
+
+        if x < 0:
+            raise Exception("Failed because x is less than 0")
+
+        if y < 0:
+            raise Exception("Failed because y is less than 0")
+
+        if xOk and yOk:
+            # px = x These were pointers
+            #py = y
+            return (y * width + x)
+        else:
+            return -1
+
+    def enlarge_to_contain(self, x: int, y: int):
+        if y < self.top:
+            self.top = y
+
+        if y > self.bottom:
+            self.bottom = y
+
+        if x < self.left:
+            self.left = x
+
+        if x > self.right:
+            self.right = x
+
     def get_left(self):
         return self.left
 
@@ -104,4 +158,3 @@ class Rectangle(object):
         self.right += dx
         self.top += dy
         self.bottom += dy
-
