@@ -649,12 +649,13 @@ class Lithosphere(object):
         """
         map_area = self.wd.get_area()
 
-        cycle_count += max_cycles > 0  # No increment if running for ever.
-        if cycle_count > max_cycles:
+        # No increment if running for ever.
+        self.cycle_count += self.max_cycles > 0
+        if self.cycle_count > self.max_cycles:
             return
 
         # Update height map to include all recent changes.
-        hmap.set_all(0)
+        self.hmap.set_all(0)
         for i in range(self.num_plates):
             x0 = int(self.plates[i].get_left())
             y0 = int(self.plates[i].get_top())
@@ -686,7 +687,8 @@ class Lithosphere(object):
 
         # create new plates IFF there are cycles left to run!
         # However, if max cycle count is "ETERNITY", then 0 < 0 + 1 always.
-        if (self.cycle_count < self.max_cycles + !self.max_cycles):
+        eternity = int(not bool(self.max_cycles))
+        if (self.cycle_count < self.max_cycles + eternity):
             self.create_plates(num_plates=self.max_plates)
 
             # Restore the ages of plates' points of crust!
@@ -717,5 +719,5 @@ class Lithosphere(object):
             crust_age = MAX_BUOYANCY_AGE - crust_age
             crust_age &= -(crust_age <= MAX_BUOYANCY_AGE)
 
-            self.hmap[i] += (hmap[i] < CONTINENTAL_BASE) * BUOYANCY_BONUS_X *
-            OCEANIC_BASE * crust_age * MULINV_MAX_BUOYANCY_AGE
+            self.hmap[i] += (self.hmap[i] < CONTINENTAL_BASE) * BUOYANCY_BONUS_X * \
+                OCEANIC_BASE * crust_age * MULINV_MAX_BUOYANCY_AGE
