@@ -20,6 +20,8 @@
 
 from numpy import pi, sin, cos
 from opensimplex import OpenSimplex
+from numpy import int64
+from numpy.random import SeedSequence
 
 simplex = OpenSimplex()
 
@@ -72,7 +74,7 @@ def octave_noise_4d(octaves: float, persistence: float, scale: float, x: float, 
     # because each octave adds more, and we need a value in [-1, 1].
     max_amplitude = 0.0
 
-    for i in range(octaves):
+    for i in range(int(octaves)):
         total += simplex.noise4d(x * frequency,
                                  y * frequency, z * frequency, w * frequency) * amplitude
 
@@ -170,11 +172,12 @@ def dot(g: list, x: float, y: float, z: float = 0.0, w: float = 0.0):
     return g[0]*x + g[1]*y
 
 
-def simplexnoise(seed, map, width: int, height: int, roughness: float):
-    ka = 256/seed
-    kb = seed*567 % 256
-    kc = (seed*seed) % 256
-    kd = (567-seed) % 256
+def simplexnoise(seed: SeedSequence, map, width: int, height: int, roughness: float):
+    seed = seed.entropy
+    ka = 256 / seed
+    kb = seed * 567 % 256
+    kc = (seed * seed) % 256
+    kd = (567 - seed) % 256
     for y in range(height):
         for x in range(width):
             fNX = x/float(width)  # we let the x-offset define the circle
@@ -195,4 +198,7 @@ def simplexnoise(seed, map, width: int, height: int, roughness: float):
                                        kd+d*noise_scale)
             if (map[y * width + x] == 0.0):
                 map[y * width + x] = v
-    return map
+        print(y)
+
+    _map = list(map)
+    return _map

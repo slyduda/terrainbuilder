@@ -19,8 +19,11 @@
 #############################################################################
 
 
-from simplexnoise import simplexnoise
-from sqrdmd import sqrdmd
+from .simplexnoise import simplexnoise
+from .sqrdmd import sqrdmd
+from numpy import int32
+from numpy.random import SeedSequence
+import sys
 
 SQRDMD_ROUGHNESS = 0.35
 
@@ -32,11 +35,12 @@ def nearest_pow(num):
     return n
 
 
-def generate_noise(tmp, tmp_dim, randstate, use_simplex):
+def generate_noise(tmp, tmp_dim, seed: SeedSequence, use_simplex):
     if use_simplex:
-        simplexnoise(randstate.next(), tmp, tmp_dim.get_width(),
-                     tmp_dim.get_height(), SQRDMD_ROUGHNESS)
+        return simplexnoise(seed, tmp, tmp_dim.get_width(),
+                            tmp_dim.get_height(), SQRDMD_ROUGHNESS)
     else:
+        # Problem with this not returning a value
         side = tmp_dim.get_max()
         side = nearest_pow(side)+1
         square_tmp = [0.0 for _ in range(side*side)]
@@ -55,7 +59,7 @@ def generate_noise(tmp, tmp_dim, randstate, use_simplex):
                 square_tmp[y*side+x] = (square_tmp[(0)*side+x] +
                                         square_tmp[(tmp_dim.get_height()-1)*side+x])/2
 
-        sqrdmd(randstate, square_tmp, side, SQRDMD_ROUGHNESS)
+        sqrdmd(seed, square_tmp, side, SQRDMD_ROUGHNESS)
 
         # Calcuate deltas(noise introduced)
         deltas = [0.0 for _ in tmp_dim.get_width()*tmp_dim.get_height()]

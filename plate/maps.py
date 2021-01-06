@@ -21,7 +21,7 @@ from numpy import ones
 # TODO. I can change these to zeros too to make plates set crust function easier
 
 
-class HeightMap(ones):
+class HeightMap(object):
     '''
         A class for constructing a matrix for height maps.
     '''
@@ -29,15 +29,16 @@ class HeightMap(ones):
     def __init__(self, x: int, y: int):
         if x == 0 or y == 0:
             assert(x == 0 or y == 0), 'width and height of {} should be greater than 0'.format(
-                self.__name__)
+                self.__class__.__name__)
         self.width = x
         self.height = y
-        super().__init__((x, y), dtype=int)
+        self._data = ones((x, y), dtype=int)
+        self._area = x * y
 
     def set_all(self, v: int):
-        for x in range(self.length):
-            for y in range(x.length):
-                self[x, y] = v
+        for x in self._data:
+            for y in x:
+                y = v
 
     def area(self):
         return self.width * self.height
@@ -49,7 +50,7 @@ class HeightMap(ones):
         return y % self.height
 
 
-class MassMap(ones):
+class MassMap(object):
     '''
         A class for constructing a matrix for mass maps.
     '''
@@ -57,15 +58,16 @@ class MassMap(ones):
     def __init__(self, x: int, y: int):
         if x == 0 or y == 0:
             assert(x == 0 or y == 0), 'width and height of {} should be greater than 0'.format(
-                self.__name__)
+                self.__class__.__name__)
         self.width = x
         self.height = y
-        super().__init__((x, y), dtype=float)
+        self._data = ones((x, y), dtype=float)
+        self._area = x * y
 
     def set_all(self, v: float):
-        for x in range(self.length):
-            for y in range(x.length):
-                self[x, y] = v
+        for x in self._data:
+            for y in x:
+                y = v
 
     def area(self):
         return self.width * self.height
@@ -77,23 +79,24 @@ class MassMap(ones):
         return y % self.height
 
 
-class AgeMap(ones):
+class AgeMap(object):
     '''
         A class for constructing a matrix for age maps.
     '''
 
-    def __init__(self,  x: int, y: int):
+    def __init__(self, x: int, y: int):
         if x == 0 or y == 0:
             assert(x == 0 or y == 0), 'width and height of {} should be greater than 0'.format(
-                self.__name__)
+                self.__class__.__name__)
         self.width = x
         self.height = y
-        super().__init__((x, y), dtype=int)
+        self._data = ones((x, y), dtype=int)
+        self._area = x * y
 
     def set_all(self, v: int):
-        for x in range(self.length):
-            for y in range(x.length):
-                self[x, y] = v
+        for x in self._data:
+            for y in x:
+                y = v
 
     def area(self):
         return self.width * self.height

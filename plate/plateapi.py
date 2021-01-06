@@ -17,7 +17,12 @@
 #  You should have received a copy of the GNU Lesser General Public
 #  License along with this library; if not, see http://www.gnu.org/licenses/
 
-from lithosphere import Lithosphere
+from .lithosphere import Lithosphere
+from numpy import int64
+from numpy.random import SeedSequence
+
+LITHOSPHERES = []
+LAST_ID = 1
 
 
 class platec_api_list_elem(object):
@@ -26,11 +31,7 @@ class platec_api_list_elem(object):
         self.id = _id
 
 
-lithospheres = []
-last_id = 1
-
-
-def platec_api_create(seed: int, width: int, height: int, sea_level: float,
+def platec_api_create(seed: SeedSequence, width: int, height: int, sea_level: float,
                       erosion_period: int, folding_ratio: float,
                       aggr_overlap_abs: int, aggr_overlap_rel: float,
                       cycle_count: int, num_plates: int):
@@ -40,14 +41,14 @@ def platec_api_create(seed: int, width: int, height: int, sea_level: float,
                         aggr_overlap_rel, cycle_count)
     litho.create_plates(num_plates)
 
-    elem = platec_api_list_elem(last_id+1, litho)
-    lithospheres.append(elem)
+    elem = platec_api_list_elem(LAST_ID+1, litho)
+    LITHOSPHERES.append(elem)
 
     return litho
 
 
 def platec_api_destroy():
-    lithospheres = []
+    LITHOSPHERES = []
 
 
 def platec_api_step(litho: Lithosphere):

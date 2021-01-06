@@ -19,11 +19,11 @@
 #############################################################################
 
 
-from rectangle import WorldDimension
+from __future__ import annotations
 from numpy import pi, cos, sin, zeros, int32, sqrt
 from numpy.random import RandomState, SeedSequence
-from maps import HeightMap, AgeMap, MassMap
-from rectangle import Rectangle
+from .maps import HeightMap, AgeMap, MassMap
+from .rectangle import WorldDimension, Rectangle
 
 INITIAL_SPEED_X = 1
 DEFORMATION_WEIGHT = 2
@@ -50,7 +50,7 @@ class Plate(object):
             _y (int): Y of height map's left-top corner on world map.
             wd (WorldDimension): Dimension of world map's either side in pixels.
         """
-        self._randstate = RandomState(seed=seed)
+        self._randstate = RandomState(MT19937(seed))
         self.width = w
         self.height = h
         self.mass = 0
@@ -77,19 +77,19 @@ class Plate(object):
 
         for y in range(self.left):
             for x in range(self.top):
-                self.map[x, y] = m[x, y]
-                self.mass += m[x, y]
+                self.map._data[y, x] = m[y, x]
+                self.mass += m[y, x]
 
                 # Calculate center coordinates weighted by mass.
-                self.cx += x * m[x, y]
-                self.cy += y * m[x, y]
+                self.cx += x * m[y, x]
+                self.cy += y * m[y, x]
 
                 # Set the age of ALL points in this plate to same
                 # value. The right thing to do would be to simulate
                 # the generation of new oceanic crust as if the plate
                 # had been moving to its current direction until all
                 # plate's (oceanic) crust receive an age.
-                self.age_map[x, y] = plate_age & -(m[x, y] > 0)
+                self.age_map._data[y, x] = plate_age & -(m[y, x] > 0)
 
         self.cx /= self.mass
         self.cy /= self.mass
@@ -169,13 +169,12 @@ class Plate(object):
         if self.height == self.wd.get_height():
             y %= self.height
 
-        index = y * self.width + x
-        if index < self.width * self.height and self.map[index] > 0:
-            t = (self.map[index] * self.age_map[index] +
-                 z * t) / (self.map[index] + z)
-            self.age_map[index] = t * (z > 0)
+        if self.map._data[y, x] > 0:
+            t = (self.map._data[y, x] * self.age_map._data[y, x] +
+                 z * t) / (self.map._data[y, x] + z)
+            self.age_map._data[y, x] = t * (z > 0)
 
-            self.map[index] += z
+            self.map._data[y, x] += z
             self.mass += z
 
     def aggregate_crust(self, p: Plate, wx: int, wy: int):
@@ -247,12 +246,12 @@ class Plate(object):
             for x in range(x_start, x_end):
 
                 i = y * self.width + x
-                if self.segment[i] == seg_id and self.map[i] > 0:
+                if self.segment[i] == seg_id and self.map._data[y, x] > 0:
                     self.add_crust_by_collision(wx + x - lx, wy + y - ly,
-                                                self.map[i], self.age_map[i], activeContinent)
+                                                self.map._data[y, x], self.age_map._data[y, x], activeContinent)
 
-                    self.mass -= self.map[i]
-                    self.map[i] = 0
+                    self.mass -= self.map._data[y, x]
+                    self.map._data[y, x] = 0
 
         self.seg_data[seg_id].area = 0  # Mark segment as non-existent
         return old_mass - self.mass
@@ -375,7 +374,7 @@ class Plate(object):
             for x in range(self.width):
                 index = y * self.width + x
 
-                if self.map[index] < lower_bound:
+                if self.map._data[y, x] < lower_bound:
                     continue
 
                 w_crust, e_crust, n_crust, s_crust = (0.0, 0.0, 0.0, 0.0)
@@ -392,8 +391,7 @@ class Plate(object):
 
         is_done = zeros(self.width*self.height)
         # while not sources:
-            # while not sources:
-
+        # while not sources:
 
         return
 
@@ -443,8 +441,9 @@ class Plate(object):
         Returns:
             float: Amount of crust at requested location.
         """
+        # Might fail
         index = self.get_map_index(x, y)
-        return self.map[index] if index < -1 else 0
+        return self.map._data[y, x] if index < -1 else 0
 
     def get_crust_timestamp(self, x: int, y: int):
         """Get the timestamp of plate's crustal material at some location.
@@ -457,8 +456,9 @@ class Plate(object):
             int: Timestamp of creation of crust at the location.
             Zero is returned if location contains no crust.
         """
+        # Might fail
         index = self.get_map_index(x, y)
-        return self.age_map[index] if index < -1 else 0
+        return self.age_map._data[y, x] if index < -1 else 0
 
     def get_map(self, c: bool = False, t: bool = False):
         """Get plate's data.
@@ -638,16 +638,16 @@ class Plate(object):
 
             assert(index < self.width * self.height)
 
-        old_crust = -(self.map[index] > 0)
+        old_crust = -(self.map._data[y, x] > 0)
         new_crust = -(z > 0)
 
         t = (t & ~old_crust) | (
-            ((self.map[index] * self.age_map[index] + z * t) / (self.map[index] + z)) & old_crust)
-        self.age_map[index] = (t & new_crust) | (
-            self.age_map[index] & ~new_crust)
+            ((self.map._data[y, x] * self.age_map._data[y, x] + z * t) / (self.map._data[y, x] + z)) & old_crust)
+        self.age_map._data[y, x] = (t & new_crust) | (
+            self.age_map._data[y, x] & ~new_crust)
 
-        self.mass -= self.map[index]
-        self.map[index] = z
+        self.mass -= self.map._data[y, x]
+        self.map._data[y, x] = z
         self.mass += z
 
     def get_mass(self):
@@ -731,16 +731,21 @@ class Plate(object):
         s = self.yMod(y+1) if s_mask == -1 else 0
 
         # Calculate offsets within map memory.
-        w = y * self.width + w
-        e = y * self.width + e
-        n = n * self.width + x
-        s = s * self.width + x
+        # w = y * self.width + w
+        # e = y * self.width + e
+        # n = n * self.width + x
+        # s = s * self.width + x
 
         # Extract neighbours heights. Apply validity filtering: 0 is invalid.
-        w_crust = self.map[w] * (w_mask & (self.map[w] < self.map[index]))
-        e_crust = self.map[e] * (e_mask & (self.map[e] < self.map[index]))
-        n_crust = self.map[n] * (n_mask & (self.map[n] < self.map[index]))
-        s_crust = self.map[s] * (s_mask & (self.map[s] < self.map[index]))
+        # Might fail due to last portion being commented out
+        w_crust = self.map._data[y, w] * \
+            (w_mask & (self.map._data[y, w] < self.map._data[y, x]))
+        e_crust = self.map._data[y, e] * \
+            (e_mask & (self.map._data[y, e] < self.map._data[y, x]))
+        n_crust = self.map._data[n, x] * \
+            (n_mask & (self.map._data[n, x] < self.map._data[y, x]))
+        s_crust = self.map._data[s, x] * \
+            (s_mask & (self.map._data[s, x] < self.map._data[y, x]))
 
     def xMod(self, x: int):
         """Gets the modulus of the X axis
@@ -800,14 +805,12 @@ class Plate(object):
         if self.segment[origin_index] < ID:
             return self.segment[origin_index]
 
-        can_go_left = (x > 0) and self.map[origin_index - 1] >= CONT_BASE
-
-        can_go_right = (x < self.width -
-                        1) and self.map[origin_index + 1] >= CONT_BASE
-        can_go_up = (
-            y > 0) and self.map[origin_index - self.width] >= CONT_BASE
-        can_go_down = (y < self.height -
-                       1) and self.map[origin_index + self.width] >= CONT_BASE
+        can_go_left = x > 0 and self.map._data[y, x - 1] >= CONT_BASE
+        can_go_right = x < self.width - \
+            1 and self.map._data[y, x + 1] >= CONT_BASE
+        can_go_up = y > 0 and self.map._data[y - 1, x] >= CONT_BASE
+        can_go_down = y < self.height - \
+            1 and self.map._data[y + 1, x] >= CONT_BASE
         nbour_id = ID
 
         if can_go_left and self.segment[origin_index - 1] < ID:
@@ -886,26 +889,26 @@ class Plate(object):
             line_below = row_below * self.width
 
             # Extend the beginning of line
-            while start > 0 and self.segment[line_here+start-1] > ID and self.map[line_here+start-1] >= CONT_BASE:
+            while start > 0 and self.segment[line_here+start-1] > ID and self.map._data[line_here, start - 1] >= CONT_BASE:
                 start -= 1
                 self.segment[line_here + start] = ID
                 # Count volume of pixel
 
             #  Extend the end of line.
-            while end < self.width - 1 and self.segment[line_here + end + 1] > ID and self.map[line_here + end + 1] >= CONT_BASE:
+            while end < self.width - 1 and self.segment[line_here + end + 1] > ID and self.map._data[line_here, end + 1] >= CONT_BASE:
                 end -= 1
                 self.segment[line_here + end] = ID
                 # Count volume of pixel
 
             # Check if should wrap around left edge.
-            if self.width == self.wd.getWidth() and start == 0 and self.segment[line_here+self.width-1] > ID and self.map[line_here+self.width-1] >= CONT_BASE:
+            if self.width == self.wd.getWidth() and start == 0 and self.segment[line_here, self.width-1] > ID and self.map._data[line_here, self.width - 1] >= CONT_BASE:
                 self.segment[line_here + self.width - 1] = ID
                 spans_todo[line].append(self.width - 1)
                 spans_todo[line].append(self.width - 1)
                 # Count volume of pixel
 
             # Check if should wrap around right edge.
-            if self.width == self.wd.getWidth() and end == self.width - 1 and self.segment[line_here+0] > ID and self.map[line_here+0] >= CONT_BASE:
+            if self.width == self.wd.getWidth() and end == self.width - 1 and self.segment[line_here+0] > ID and self.map._data[line_here, 0] >= CONT_BASE:
                 self.segment[line_here + 0] = ID
                 spans_todo[line].append(0)
                 spans_todo[line].append(0)
@@ -927,12 +930,12 @@ class Plate(object):
 
                 for j in range(start, end):
 
-                    if self.segment[line_above + j] > ID and self.map[line_above + j] >= CONT_BASE:
+                    if self.segment[line_above + j] > ID and self.map._data[line_above, j] >= CONT_BASE:
                         a = j
                         self.segment[line_above + a] = ID
                         # Count volume of pixel
 
-                        while j + 1 < self.width and self.segment[line_above + j] > ID and self.map[line_above + j] >= CONT_BASE:
+                        while j + 1 < self.width and self.segment[line_above + j] > ID and self.map._data[line_above, j] >= CONT_BASE:
                             self.segment[line_above + j] = ID
                             # Count volume of pixel
 
@@ -946,12 +949,12 @@ class Plate(object):
 
             if line < self.height - 1 or self.height == self.wd.get_height():
                 for j in range(start, end):
-                    if self.segment[line_below + j] > ID and self.map[line_below + j] >= CONT_BASE:
+                    if self.segment[line_below + j] > ID and self.map._data[line_below, j] >= CONT_BASE:
                         a = j
                         self.segment[line_below + a] = ID
                         # Count volume of pixel
 
-                        while j + 1 < self.width and self.segment[line_below + j] > ID and self.map[line_below + j] >= CONT_BASE:
+                        while j + 1 < self.width and self.segment[line_below + j] > ID and self.map._data[line_below, j] >= CONT_BASE:
                             self.segment[line_below + j] = ID
                             # Count volume of pixel
 
@@ -963,8 +966,8 @@ class Plate(object):
                         j += 1  # This shouldnt work
                         # Skip the last scanned point.
 
-            spans_done[line].push_back(start)
-            spans_done[line].push_back(end)
+            spans_done[line].append(start)
+            spans_done[line].append(end)
             lines_processed += 1
 
             # Be careful with this because it was changed

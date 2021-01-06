@@ -28,12 +28,12 @@ the basis of chemistry and mineralogy.
 '''
 
 from numpy import array, zeros, int32
-from rectangle import WorldDimension
-from numpy.random import RandomState, SeedSequence
-from noise import generate_noise
-from plate import Plate
+from numpy.random import RandomState, SeedSequence, MT19937
 
-from maps import HeightMap, AgeMap
+from .rectangle import WorldDimension
+from .noise import generate_noise
+from .plate import Plate
+from .maps import HeightMap, AgeMap
 
 SUBDUCT_RATIO = 0.5
 
@@ -102,7 +102,7 @@ class PlateArea(object):
 
 class Lithosphere(object):
 
-    def __init__(self, seed: int, width: int, height: int, sea_level: float, _erosion_period: int, _folding_ratio: float, aggr_ratio_abs: int, aggr_ration_rel: float, num_cycles: int):
+    def __init__(self, seed: SeedSequence, width: int, height: int, sea_level: float, _erosion_period: int, _folding_ratio: float, aggr_ratio_abs: int, aggr_ration_rel: float, num_cycles: int):
         """Initialize system's height map i.e. topography.
 
         Args:
@@ -118,7 +118,7 @@ class Lithosphere(object):
         """
 
         self.wd = WorldDimension(width, height)
-        self._randstate = RandomState(seed=seed)
+        self._randstate = RandomState(MT19937(seed))
         self._steps = 0
 
         self.erosion_period = _erosion_period
@@ -140,7 +140,7 @@ class Lithosphere(object):
         A = tmp_dim.get_area()
         tmp = [0.0 for _ in range(A)]
 
-        tmp = self.create_noise(tmp, tmp_dim, True)
+        tmp = self.create_noise(tmp, tmp_dim, seed, True)
 
         lowest = tmp[0]
         highest = tmp[0]
@@ -179,8 +179,9 @@ class Lithosphere(object):
 
         self.imap = [0 for _ in range(self.wd.get_area())]
 
-    def create_noise(self, tmp: list, tmp_dim: WorldDimension, use_simplex: bool = False):
-        return generate_noise(tmp, tmp_dim, self._randstate, use_simplex)
+    def create_noise(self, tmp: list, tmp_dim: WorldDimension, seed: SeedSequence, use_simplex: bool = False):
+        map = generate_noise(tmp, tmp_dim, seed, use_simplex)
+        return map
 
     def create_plates(self, num_plates):
         map_area = self.wd.get_area()

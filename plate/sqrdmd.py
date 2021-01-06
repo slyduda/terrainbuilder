@@ -17,7 +17,7 @@
 #  You should have received a copy of the GNU Lesser General Public
 #  License along with this library; if not, see http://www.gnu.org/licenses/
 
-from numpy.random import RandomState, SeedSequence
+from numpy.random import RandomState, SeedSequence, MT19937
 from numpy import array, int32
 
 
@@ -46,7 +46,7 @@ def normalize(arr, size: int):
 
 
 def sqrdmd(seed: SeedSequence, map: list, size: int, rgh: float):
-    _randstate = RandomState(seed=seed)
+    _randstate = RandomState(MT19937(seed))
 
     full_size = size * size
 
