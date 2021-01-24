@@ -76,18 +76,18 @@ def sqrdmd(seed: SeedSequence, map: list, size: int, rgh: float):
 
     dy = step * size
     CALC_SUM(map[0], map[step], map[dy], map[dy + step],
-             _randstate.random_integers(1, int32))
+             _randstate.randint(1, high=2147483648))
     SAVE_SUM(i)
     center_sum = sum
 
     p0 = step >> 1
     CALC_SUM(map[0], map[step], center_sum, center_sum,
-             _randstate.random_integers(1, int32))
+             _randstate.randint(1, high=2147483648))
     SAVE_SUM(p0)
 
     p1 = p0 * size
     CALC_SUM(map[0], map[dy], center_sum, center_sum,
-             _randstate.random_integers(1, int32))
+             _randstate.randint(1, high=2147483648))
     SAVE_SUM(p1)
     map[full_size + p0 - size] = map[p0]  # Copy top val into btm row.
     map[p1 + size - 1] = map[p1]  # Copy left value into right column.
@@ -110,7 +110,8 @@ def sqrdmd(seed: SeedSequence, map: list, size: int, rgh: float):
             while x1 < size:
                 sum = (map[y0+x0] + map[y0+x1] +
                        map[y1+x0] + map[y1+x1]) * 0.25
-                sum = sum + slope * _randstate.random_integers(1, int32)
+                sum = sum + slope * \
+                    _randstate.randint(1, high=2147483648)
                 masked = int(not bool(int(map[i])))
                 map[i] = map[i] * opposite_of(masked) + sum * masked
                 # There's additional step taken at the end of last

@@ -27,6 +27,7 @@ on time scales of thousands of years or greater. The crust and upper mantle are 
 the basis of chemistry and mineralogy.
 '''
 
+import sys
 from numpy import array, zeros, int32
 from numpy.random import RandomState, SeedSequence, MT19937
 
@@ -34,6 +35,7 @@ from .rectangle import WorldDimension
 from .noise import generate_noise
 from .plate import Plate
 from .maps import HeightMap, AgeMap
+
 
 SUBDUCT_RATIO = 0.5
 
@@ -43,13 +45,14 @@ MULINV_MAX_BUOYANCY_AGE = 1.0 / MAX_BUOYANCY_AGE
 
 RESTART_ENERGY_RATIO = 0.15
 RESTART_SPEED_LIMIT = 2.0
+RESTART_ITERATIONS = 600
 NO_COLLISION_TIME_LIMIT = 10
 
 # NEEDS WORK
-CONTINENTAL_BASE = 0
-OCEANIC_BASE = 0
-FLT_EPSILON = 0
-BOOL_REGENERATE_CRUST = 0
+CONTINENTAL_BASE = 2.0
+OCEANIC_BASE = .1
+FLT_EPSILON = sys.float_info.epsilon
+BOOL_REGENERATE_CRUST = 1
 
 
 def findBound(*map, length, x0, y0, dx, dy):
@@ -135,6 +138,7 @@ class Lithosphere(object):
         self.hmap = HeightMap(width, height)
         self.amap = AgeMap(width, height)
         self.plates = []
+        self.plate_areas = []
 
         tmp_dim = WorldDimension(width, height)
         A = tmp_dim.get_area()
@@ -160,16 +164,21 @@ class Lithosphere(object):
             for i in range(A):
                 count += (tmp[i] < sea_threshold)
 
-                th_step *= 0.5
-                if (count / float(A) < sea_level):
-                    sea_threshold += th_step
-                else:
-                    sea_threshold -= th_step
+            th_step *= 0.5
+            if (count / float(A) < sea_level):
+                sea_threshold += th_step
+            else:
+                sea_threshold -= th_step
 
         sea_level = sea_threshold
         for i in range(A):
-            tmp[i] = (tmp[i] > sea_level) * (tmp[i] + CONTINENTAL_BASE) + \
-                (tmp[i] <= sea_level) * OCEANIC_BASE
+            cont = int(tmp[i] > sea_level) * (tmp[i] + CONTINENTAL_BASE)
+            ocea = int(tmp[i] <= sea_level) * OCEANIC_BASE
+            tmp[i] = cont + ocea
+
+        for i in range(len(tmp)):
+            y, x = (i // width, i % width)
+            self.hmap._data[y, x] = tmp[i]
 
         self.peak_ek = 0.0
         self.last_coll_count = 0
@@ -177,137 +186,138 @@ class Lithosphere(object):
         self.collisions = None
         self.subductions = None
 
-        self.imap = [0 for _ in range(self.wd.get_area())]
+        self.imap = [None for _ in range(self.wd.get_area())]
 
     def create_noise(self, tmp: list, tmp_dim: WorldDimension, seed: SeedSequence, use_simplex: bool = False):
         map = generate_noise(tmp, tmp_dim, seed, use_simplex)
         return map
+
+    def grow_plates(self):
+        #  "Grow" plates from their origins until surface is fully populated.
+        owner = self.imap  # Create an alias.
+        max_border = 1
+        i = 0
+        while max_border:
+            max_border = 0
+            for i in range(self.num_plates):
+                area = self.plate_areas[i]
+                N = len(area.border)
+                max_border = max_border if max_border > N else N
+
+                if N == 0:
+                    continue
+
+                j = self._randstate.randint(1, high=2147483648) % N
+                p = area.border[j]
+                cy = self.wd.y_from_index(p)
+                cx = self.wd.x_from_index(p)
+
+                width = self.wd.get_width()
+                height = self.wd.get_height()
+                lft = cx - 1 if cx > 0 else width - 1
+                rgt = cx + 1 if cx < width - 1 else 0
+                top = cy - 1 if cy > 0 else height - 1
+                btm = cy + 1 if cy < height - 1 else 0
+
+                n = top * width + cx  # North.
+                s = btm * width + cx  # South.
+                w = cy * width + lft  # West.
+                e = cy * width + rgt  # East.
+
+                if owner[n] >= self.num_plates:
+                    owner[n] = i
+                    area.border.append(n)
+
+                    if area.top == self.wd.y_mod(top + 1):
+                        area.top = top
+                        area.hgt += 1
+
+                if owner[s] >= self.num_plates:
+                    owner[s] = i
+                    area.border.append(s)
+
+                    if btm == self.wd.y_mod(area.btm + 1):
+                        area.btm = btm
+                        area.hgt += 1
+
+                if owner[w] >= self.num_plates:
+                    owner[w] = i
+                    area.border.append(w)
+
+                    if area.lft == self.wd.x_mod(lft + 1):
+                        area.lft = lft
+                        area.wdt += 1
+
+                if owner[e] >= self.num_plates:
+                    owner[e] = i
+                    area.border.append(e)
+
+                    if rgt == self.wd.x_mod(area.rgt + 1):
+                        area.rgt = rgt
+                        area.wdt += 1
+
+                # Overwrite processed point with unprocessed one.
+                area.border[j] = area.border[-1]
+                area.border.pop()
 
     def create_plates(self, num_plates):
         map_area = self.wd.get_area()
         self.max_plates = num_plates
         self.num_plates = num_plates
 
-        vec = []  # for plate collision objects
-        vec_size = self.wd.get_max()*4  # Not going to use this yet
+        self.imap = [255 for i in range(map_area)]
+        self.collisions = [[] for _ in range(num_plates)]
+        self.subductions = [[] for _ in range(num_plates)]
 
-        self.collisions = []
-        self.subductions = []
-
+        used = []
+        self.plate_areas = [PlateArea() for _ in range(num_plates)]
         for i in range(num_plates):
-            self.collisions.append(vec)
-            self.subductions.append(vec)
-
-        for i in range(map_area):
-            self.imap[i] = i
-
-        area = [PlateArea() for _ in num_plates]
-        for i in range(num_plates):
+            area = self.plate_areas[i]
             # Randomly select an unused plate origin.
-            p = self.imap[self._randstate.randint(1, int32) % (map_area - i)]
+            p = self._randstate.randint(1, high=2147483648) % (map_area)
+            while p in used:
+                p = self._randstate.randint(1, high=2147483648) % (map_area)
+
             y = self.wd.y_from_index(p)
             x = self.wd.x_from_index(p)
 
-            area[i].lft = area[i].rgt = x  # Save origin...
-            area[i].top = area[i].btm = y
-            area[i].wdt = area[i].hgt = 1
+            area.lft = area.rgt = x  # Save origin...
+            area.top = area.btm = y
+            area.wdt = area.hgt = 1
 
-            area[i].border.append(p)  # ...and mark it as border.
+            area.border.append(p)  # ...and mark it as border.
+            used.append(p)
+            self.imap[p] = i
 
-            # Overwrite used entry with last unused entry in array.
-            self.imap[p] = self.imap[map_area - i - 1]
+        self.grow_plates()
 
-        owner = self.imap  # Create an alias.
-        # TODO Might have to copy the imap
-
-        # "Grow" plates from their origins until surface is fully populated.
-        max_border = 1
-        i = 0
-        while max_border:
-            max_border = i
-            for i in range(num_plates):
-                N = len(area[i].border)
-                max_border = max_border if max_border > N else N
-
-                if N == 0:
-                    continue
-
-                j = self._randstate.randint(1, int32) % N
-                p = area[i].border[j]
-                cy = self.wd.y_from_index(p)
-                cx = self.wd.x_from_index(p)
-
-                lft = cx - 1 if cx > 0 else self.wd.get_width() - 1
-                rgt = cx + 1 if cx < self.wd.get_width() - 1 else 0
-                top = cy - 1 if cy > 0 else self.wd.get_height() - 1
-                btm = cy + 1 if cy < self.wd.get_height() - 1 else 0
-
-                n = top * self.wd.get_width() + cx  # North.
-                s = btm * self.wd.get_width() + cx  # South.
-                w = cy * self.wd.get_width() + lft  # West.
-                e = cy * self.wd.get_width() + rgt  # East.
-
-                if owner[n] >= num_plates:
-                    owner[n] = i
-                    area[i].border.push_back(n)
-
-                    if area[i].top == self.wd.y_mod(top + 1):
-                        area[i].top = top
-                        area[i].hgt += 1
-
-                if owner[s] >= num_plates:
-                    owner[s] = i
-                    area[i].border.push_back(s)
-
-                    if btm == self.wd.y_mod(area[i].btm + 1):
-                        area[i].btm = btm
-                        area[i].hgt += 1
-
-                if owner[w] >= num_plates:
-                    owner[w] = i
-                    area[i].border.push_back(w)
-
-                    if area[i].lft == self.wd.x_mod(lft + 1):
-                        area[i].lft = lft
-                        area[i].wdt += 1
-
-                if owner[e] >= num_plates:
-                    owner[e] = i
-                    area[i].border.push_back(e)
-
-                    if rgt == self.wd.x_mod(area[i].rgt + 1):
-                        area[i].rgt = rgt
-                        area[i].wdt += 1
-
-                # Overwrite processed point with unprocessed one.
-                area[i].border[j] = area[i].border.back()
-                area[i].border.pop_back()
-
-        self.plates = [None for _ in num_plates]
+        self.plates = [None for _ in range(num_plates)]
 
         # Extract and create plates from initial terrain.
         for i in range(num_plates):
-            area[i].wdt = self.wd.x_cap(area[i].wdt)
-            area[i].hgt = self.wd.y_cap(area[i].hgt)
+            area = self.plate_areas[i]
+            area.wdt = self.wd.x_cap(area.wdt)
+            area.hgt = self.wd.y_cap(area.hgt)
 
-            x0 = area[i].lft
-            x1 = 1 + x0 + area[i].wdt
-            y0 = area[i].top
-            y1 = 1 + y0 + area[i].hgt
+            x0 = area.lft
+            x1 = 1 + x0 + area.wdt
+            y0 = area.top
+            y1 = 1 + y0 + area.hgt
             width = x1 - x0
             height = y1 - y0
-            plt = [0.0 for _ in width * height]
+            plt = [0.0 for _ in range(width * height)]
 
             # Copy plate's height data from global map into local map.
             j = 0
             for y in range(y0, y1):
                 for x in range(x0, x1):
                     k = self.wd.normalized_index_of(x, y)
-                    plt[j] = self.hmap[k] * (owner[k] == i)
+                    xf = self.wd.x_from_index(k)
+                    yf = self.wd.y_from_index(k)
+                    plt[j] = self.hmap._data[yf, xf] * (self.imap[k] == i)
                     j += 1
 
-            # Create plate. TODO Fix the SeedSeq
-            self.plates[i] = Plate(self._randstate.randint(1, int32), plt, width,
+            self.plates[i] = Plate(self._randstate.randint(1, high=2147483648), plt, width,
                                    height, x0, y0, i, self.wd)
 
         self.iter_count = num_plates + MAX_BUOYANCY_AGE
@@ -358,7 +368,7 @@ class Lithosphere(object):
 
         map_area = self.wd.get_area()
         prev_imap = list(self.imap)
-        self.imap = [0 for _ in map_area]
+        self.imap = [255 for _ in range(map_area)]
 
         # Realize accumulated external forces to each plate.
         for i in range(self.num_plates):
@@ -392,35 +402,41 @@ class Lithosphere(object):
             j = 0
             for y in range(y0, y1):
                 for x in range(x0, x1):
+                    y_index, x_index = plate_map.get_indeces(j)
                     x_mod = self.wd.x_mod(x)
                     y_mod = self.wd.y_mod(y)
 
                     k = self.wd.index_of(x_mod, y_mod)
 
-                    if plate_map[j] < 2 * FLT_EPSILON:  # No crust here...
+                    # No crust here...
+                    if plate_map._data[y_index, x_index] < 2 * FLT_EPSILON:
                         j += 1
                         continue
 
                     if self.imap[k] >= self.num_plates:  # No one here yet?
                         # This plate becomes the "owner" of current location
                         # if it is the first plate to have crust on it.
-                        self.hmap[k] = plate_map[j]
+                        self.hmap._data[y_mod,
+                                        x_mod] = plate_map._data[y_index, x_index]
                         self.imap[k] = i
-                        self.amap[k] = plate_age[j]
+                        self.amap._data[y_mod,
+                                        x_mod] = plate_age._data[y_index, x_index]
                         j += 1
                         continue
 
                     # DO NOT ACCEPT HEIGHT EQUALITY! Equality leads to subduction
                     # of shore that 's barely above sea level. It's a lot less
                     # serious problem to treat very shallow waters as continent...
-                    prev_is_oceanic = self.hmap[k] < CONTINENTAL_BASE
-                    this_is_oceanic = plate_map[j] < CONTINENTAL_BASE
+                    prev_is_oceanic = self.hmap._data[y_mod,
+                                                      x_mod] < CONTINENTAL_BASE
+                    this_is_oceanic = plate_map._data[y_index,
+                                                      x_index] < CONTINENTAL_BASE
 
                     prev_timestamp = self.plates[self.imap[k]
                                                  ].get_crust_timestamp(x_mod, y_mod)
-                    this_timestamp = plate_age[j]
-                    prev_is_bouyant = (self.hmap[k] > plate_map[j]) | ((self.hmap[k] + 2 * FLT_EPSILON > plate_map[j]) & (
-                        self.hmap[k] < 2 * FLT_EPSILON + plate_map[j]) & (prev_timestamp >= this_timestamp))
+                    this_timestamp = plate_age._data[y_index, x_index]
+                    prev_is_bouyant = (self.hmap._data[y_mod, x_mod] > plate_map._data[y_index, x_index]) | ((self.hmap._data[y_mod, x_mod] + 2 * FLT_EPSILON > plate_map._data[y_index, x_index]) & (
+                        self.hmap._data[y_mod, x_mod] < 2 * FLT_EPSILON + plate_map._data[y_index, x_index]) & (prev_timestamp >= this_timestamp))
 
                     # Handle subduction of oceanic crust as special case.
                     if this_is_oceanic and prev_is_bouyant:
@@ -430,7 +446,7 @@ class Lithosphere(object):
                         # on top of the subducting plate.
                         sediment = SUBDUCT_RATIO * OCEANIC_BASE * \
                             (CONTINENTAL_BASE -
-                             plate_map[j]) / CONTINENTAL_BASE
+                             plate_map._data[y_index, x_index]) / CONTINENTAL_BASE
 
                         # Save collision to the receiving plate's list.
                         coll = PlateCollision(i, x_mod, y_mod, sediment)
@@ -443,30 +459,32 @@ class Lithosphere(object):
                         # b) protecting subducted locations from receiving
                         # crust from other subductions/collisions.
                         self.plates[i].set_crust(
-                            x_mod, y_mod, plate_map[j] - OCEANIC_BASE, this_timestamp)
+                            x_mod, y_mod, plate_map._data[y_index, x_index] - OCEANIC_BASE, this_timestamp)
 
-                        if plate_map[j] <= 0:
+                        if plate_map._data[y_index, x_index] <= 0:
                             j += 1
                             continue  # Nothing more to collide.
 
                     elif prev_is_oceanic:
                         sediment = SUBDUCT_RATIO * OCEANIC_BASE * \
                             (CONTINENTAL_BASE -
-                             self.hmap[k]) / CONTINENTAL_BASE
+                             self.hmap._data[y_mod, x_mod]) / CONTINENTAL_BASE
 
                         coll = PlateCollision(
                             self.imap[k], x_mod, y_mod, sediment)
-                        self.subductions[i].push_back(coll)
+                        self.subductions[i].append(coll)
                         oceanic_collisions += 1
 
                         self.plates[self.imap[k]].set_crust(
-                            x_mod, y_mod, self.hmap[k] - OCEANIC_BASE, prev_timestamp)
-                        self.hmap[k] -= OCEANIC_BASE
+                            x_mod, y_mod, self.hmap._data[y_mod, x_mod] - OCEANIC_BASE, prev_timestamp)
+                        self.hmap._data[y_mod, x_mod] -= OCEANIC_BASE
 
-                        if self.hmap[k] <= 0:
+                        if self.hmap._data[y_mod, x_mod] <= 0:
                             self.imap[k] = i
-                            self.hmap[k] = plate_map[j]
-                            self.amap[k] = plate_age[j]
+                            self.hmap._data[y_mod,
+                                            x_mod] = plate_map._data[y_index, x_index]
+                            self.amap._data[y_mod,
+                                            x_mod] = plate_age._data[y_index, x_index]
                             j += 1
                             continue
 
@@ -480,37 +498,39 @@ class Lithosphere(object):
                     # Move some crust from the SMALLER plate onto LARGER one.
                     if this_area < prev_area:
                         coll = PlateCollision(
-                            self.imap[k], x_mod, y_mod, plate_map[j] * self.folding_ratio)
+                            self.imap[k], x_mod, y_mod, plate_map._data[y_index, x_index] * self.folding_ratio)
 
                         # Give some...
-                        self.hmap[k] += coll.crust
+                        self.hmap._data[y_mod, x_mod] += coll.crust
                         self.plates[self.imap[k]].set_crust(
-                            x_mod, y_mod, self.hmap[k], plate_age[j])
+                            x_mod, y_mod, self.hmap._data[y_mod, x_mod], plate_age._data[y_index, x_index])
 
                         # And take some.
                         self.plates[i].set_crust(
-                            x_mod, y_mod, plate_map[j] * (1.0 - self.folding_ratio), plate_age[j])
+                            x_mod, y_mod, plate_map._data[y_index, x_index] * (1.0 - self.folding_ratio), plate_age._data[y_index, x_index])
 
                         # Add collision to the earlier plate's list.
                         self.collisions[i].append(coll)
                         continental_collisions += 1
                     else:
                         coll = PlateCollision(
-                            i, x_mod, y_mod, self.hmap[k] * self.folding_ratio)
+                            i, x_mod, y_mod, self.hmap._data[y_mod, x_mod] * self.folding_ratio)
 
                         self.plates[i].set_crust(
-                            x_mod, y_mod, plate_map[j] + coll.crust, self.amap[k])
+                            x_mod, y_mod, plate_map._data[y_index, x_index] + coll.crust, self.amap._data[y_mod, x_mod])
 
                         self.plates[self.imap[k]].set_crust(
-                            x_mod, y_mod, self.hmap[k] * (1.0 - self.folding_ratio), self.amap[k])
+                            x_mod, y_mod, self.hmap._data[y_mod, x_mod] * (1.0 - self.folding_ratio), self.amap._data[y_mod, x_mod])
 
                         self.collisions[self.imap[k]].append(coll)
                         continental_collisions += 1
 
                         # Give the location to the larger plate.
-                        self.hmap[k] = plate_map[j]
+                        self.hmap._data[y_mod,
+                                        x_mod] = plate_map._data[y_index, x_index]
                         self.imap[k] = i
-                        self.amap[k] = plate_age[j]
+                        self.amap._data[y_mod,
+                                        x_mod] = plate_age._data[y_index, x_index]
 
                     j += 1
 
@@ -522,7 +542,7 @@ class Lithosphere(object):
                 coll = self.subductions[i][j]
 
                 # ifdef DEBUG
-                if i == coll.index:
+                if i == coll._index:
                     print("when subducting: SRC == DEST!")
                     exit(1)
                 # endif
@@ -531,7 +551,8 @@ class Lithosphere(object):
                 # This is a very cheap way to emulate slab pull.
                 # Just perform subduction and on our way we go!
                 self.plates[i].add_crust_by_subduction(
-                    coll.wx, coll.wy, coll.crust, self.iter_count, self.plates[coll.index].get_velocity_x(), self.plates[coll.index].get_velocity_y())
+                    coll.wx, coll.wy, coll.crust, self.iter_count, self.plates[coll._index].get_velocity_x(), self.plates[coll._index].get_velocity_y())
+
             self.subductions[i] = []
 
         for i in range(self.num_plates):
@@ -545,19 +566,19 @@ class Lithosphere(object):
                 coll_ratio_j = 0.0
 
                 # ifdef DEBUG
-                if i == coll.index:
+                if i == coll._index:
                     print("when colliding: SRC == DEST!")
                     exit(1)
                 # endif
 
                 # Collision causes friction. Apply it to both plates.
                 self.plates[i].apply_friction(coll.crust)
-                self.plates[coll.index].apply_friction(coll.crust)
+                self.plates[coll._index].apply_friction(coll.crust)
 
                 coll_count_i, coll_ratio_i = self.plates[i].get_collision_info(
-                    coll.wx, coll.wy, coll_count_i, coll_ratio_i)
-                coll_count_j, coll_ratio_j = self.plates[coll.index].get_collision_info(
-                    coll.wx, coll.wy, coll_count_j, coll_ratio_j)
+                    coll.wx, coll.wy)
+                coll_count_j, coll_ratio_j = self.plates[coll._index].get_collision_info(
+                    coll.wx, coll.wy)
 
                 # Find the minimum count of collisions between two
                 # continents on different plates.
@@ -566,7 +587,7 @@ class Lithosphere(object):
                 # a few. It's those few that matter between these two
                 # plates, not what the big plate has with all the
                 # other plates around it.
-                coll_count = coll_count_i
+                coll_count = int(coll_count_i)
                 coll_count -= (coll_count - coll_count_j) & - \
                     (coll_count > coll_count_j)
 
@@ -574,23 +595,23 @@ class Lithosphere(object):
                 # two continents on different plates.
                 # Like earlier, it's the "experience" of the smaller
                 # plate that matters here.
-                coll_ratio = coll_ratio_i
+                coll_ratio = float(coll_ratio_i)
                 coll_ratio += (coll_ratio_j - coll_ratio) * \
                     (coll_ratio_j > coll_ratio)
 
-                if (coll_count > self.aggr_overlap_abs) | (coll_ratio > self.aggr_overlap_rel):
+                if (coll_count > self.aggr_overlap_abs) or (coll_ratio > self.aggr_overlap_rel):
                     amount = self.plates[i].aggregate_crust(
-                        self.plates[coll.index], coll.wx, coll.wy)
+                        self.plates[coll._index], coll.wx, coll.wy)
 
                     # Calculate new direction and speed for the
                     # merged plate system, that is , for the
                     # receiving plate!
-                    self.plates[coll.index].collide(
+                    self.plates[coll._index].collide(
                         self.plates[i], coll.wx, coll.wy, amount)
 
             self.collisions[i] = []
 
-        index_found = [0 for _ in self.num_plates]
+        index_found = [0 for _ in range(self.num_plates)]
 
         # Fill divergent boundaries with new crustal material, molten magma.
         i = 0
@@ -611,17 +632,18 @@ class Lithosphere(object):
                     # Magma that has just crystallized into oceanic crust
                     # is more buoyant than that which has had a lot of
                     # time to cool down and become more dense.
-                    self.amap[i] = self.iter_count
-                    self.hmap[i] = OCEANIC_BASE * BUOYANCY_BONUS_X
+                    self.hmap._data[y, x] = self.iter_count
+                    self.hmap._data[y, x] = OCEANIC_BASE * BUOYANCY_BONUS_X
 
                     self.plates[self.imap[i]].set_crust(
                         x, y, OCEANIC_BASE, self.iter_count)
 
-                # TODO DOUBLE CHECK THIS OPErATER
-                elif index_found[self.imap[i]] + 1 and self.hmap[i] <= 0:
+                else:
                     index_found[self.imap[i]] += 1
-                    print("Occupied point has no land mass!")
-                    exit(1)
+                    if self.hmap._data[y, x] <= 0.0:
+                        print("Occupied point has no land mass!")
+                        exit(1)
+                i += 1
 
         # Remove empty plates from the system.
         i = 0
@@ -630,8 +652,8 @@ class Lithosphere(object):
                 print("Only one plate left!")
 
             elif (index_found[i] == 0):
-                self.plates[i] = self.plates[self.num_plates - 1]
-                index_found[i] = index_found[self.num_plates - 1]
+                self.plates[i] = self.plates.pop()
+                index_found[i] = index_found.pop()
 
                 # Life is seldom as simple as seems at first.
                 # Replace the moved plate's index in the index map
@@ -648,11 +670,13 @@ class Lithosphere(object):
             # Calculate the inverted age of this piece of crust.
             # Force result to be minimum between inv. age and
             # max buoyancy bonus age.
-            crust_age = self.iter_count - self.amap[i]
+            y_index, x_index = self.amap.get_indeces(i)
+            crust_age = int(self.iter_count -
+                            self.amap._data[y_index, x_index])
             crust_age = MAX_BUOYANCY_AGE - crust_age
-            crust_age &= -(crust_age <= MAX_BUOYANCY_AGE)
+            crust_age = crust_age & -(crust_age <= MAX_BUOYANCY_AGE)
 
-            self.hmap[i] += (self.hmap[i] < CONTINENTAL_BASE) * BUOYANCY_BONUS_X * \
+            self.hmap._data[y_index, x_index] += (self.hmap._data[y_index, x_index] < CONTINENTAL_BASE) * BUOYANCY_BONUS_X * \
                 OCEANIC_BASE * crust_age * MULINV_MAX_BUOYANCY_AGE
 
         self.iter_count += 1
@@ -687,21 +711,21 @@ class Lithosphere(object):
             plate_map = self.plates[i].get_map(True, False)
             plate_age = self.plates[i].get_map(False, True)
 
-        # Copy first part of plate onto world map.
-        j = 0
-        for y in range(y0, y1):
-            for x in range(x0, x1):
-                x_mod = self.wd.x_mod(x)
-                y_mod = self.wd.y_mod(y)
-                h0 = self.hmap[self.wd.index_of(x_mod, y_mod)]
-                h1 = plate_map[j]
-                a0 = self.amap[self.wd.index_of(x_mod, y_mod)]
-                a1 = plate_age[j]
+            # Copy first part of plate onto world map.
+            j = 0
+            for y in range(y0, y1):
+                for x in range(x0, x1):
+                    x_mod = self.wd.x_mod(x)
+                    y_mod = self.wd.y_mod(y)
+                    h0 = self.hmap._data[y_mod, x_mod]
+                    h1 = plate_map._data[y, x]
+                    a0 = self.amap._data[x_mod, y_mod]
+                    a1 = plate_age._data[y, x]
 
-                self.amap[self.wd.index_of(x_mod, y_mod)] = (
-                    h0 * a0 + h1 * a1) / (h0 + h1)
-                self.hmap[self.wd.index_of(x_mod, y_mod)] += plate_map[j]
-                j += 1
+                    self.amap._data[x_mod, y_mod] = (
+                        h0 * a0 + h1 * a1) / (h0 + h1)
+                    self.hmap._data[y_mod, x_mod] += plate_map._data[y, x]
+                    j += 1
 
         # Delete plates.
         self.plates = []
@@ -730,16 +754,16 @@ class Lithosphere(object):
                         x_mod = self.wd.x_mod(x)
                         y_mod = self.wd.y_mod(y)
 
-                        plate_age[j] = self.amap[self.wd.index_of(
-                            x_mod, y_mod)]
+                        plate_age[j] = self.amap._data[y_mod, x_mod]
 
             return
 
         # Add some "virginity buoyancy" to all pixels for a visual boost.
         for i in range((BUOYANCY_BONUS_X > 0) * map_area):
-            crust_age = self.iter_count - self.amap[i]
+            y_index, x_index = self.amap.get_indeces(i)
+            crust_age = self.iter_count - self.amap._data[y_index, x_index]
             crust_age = MAX_BUOYANCY_AGE - crust_age
             crust_age &= -(crust_age <= MAX_BUOYANCY_AGE)
 
-            self.hmap[i] += (self.hmap[i] < CONTINENTAL_BASE) * BUOYANCY_BONUS_X * \
+            self.hmap._data[y_index, x_index] += (self.hmap._data[y_index, x_index] < CONTINENTAL_BASE) * BUOYANCY_BONUS_X * \
                 OCEANIC_BASE * crust_age * MULINV_MAX_BUOYANCY_AGE

@@ -53,3 +53,4 @@ def platec_api_destroy():
 
 def platec_api_step(litho: Lithosphere):
     litho.update()
+    return litho

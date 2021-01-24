@@ -22,6 +22,7 @@ from numpy import pi, sin, cos
 from opensimplex import OpenSimplex
 from numpy import int64
 from numpy.random import SeedSequence
+from progress.bar import IncrementalBar
 
 simplex = OpenSimplex()
 
@@ -178,6 +179,8 @@ def simplexnoise(seed: SeedSequence, map, width: int, height: int, roughness: fl
     kb = seed * 567 % 256
     kc = (seed * seed) % 256
     kd = (567 - seed) % 256
+    j_end = height
+    bar = IncrementalBar('Generating Noise', max=j_end)
     for y in range(height):
         for x in range(width):
             fNX = x/float(width)  # we let the x-offset define the circle
@@ -198,7 +201,8 @@ def simplexnoise(seed: SeedSequence, map, width: int, height: int, roughness: fl
                                        kd+d*noise_scale)
             if (map[y * width + x] == 0.0):
                 map[y * width + x] = v
-        print(y)
+        bar.next()
+    bar.finish()
 
     _map = list(map)
     return _map

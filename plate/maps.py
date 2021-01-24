@@ -26,19 +26,17 @@ class HeightMap(object):
         A class for constructing a matrix for height maps.
     '''
 
-    def __init__(self, x: int, y: int):
+    def __init__(self, y: int, x: int):
         if x == 0 or y == 0:
             assert(x == 0 or y == 0), 'width and height of {} should be greater than 0'.format(
                 self.__class__.__name__)
         self.width = x
         self.height = y
-        self._data = ones((x, y), dtype=int)
+        self._data = ones((y, x), dtype=float)
         self._area = x * y
 
-    def set_all(self, v: int):
-        for x in self._data:
-            for y in x:
-                y = v
+    def set_all(self, v: float):
+        self._data[:] = v
 
     def area(self):
         return self.width * self.height
@@ -48,6 +46,9 @@ class HeightMap(object):
 
     def y_mod(self, y: int):
         return y % self.height
+
+    def get_indeces(self, i: int):
+        return (i // self.width, i % self.width)
 
 
 class MassMap(object):
@@ -55,19 +56,17 @@ class MassMap(object):
         A class for constructing a matrix for mass maps.
     '''
 
-    def __init__(self, x: int, y: int):
+    def __init__(self, y: int, x: int):
         if x == 0 or y == 0:
             assert(x == 0 or y == 0), 'width and height of {} should be greater than 0'.format(
                 self.__class__.__name__)
         self.width = x
         self.height = y
-        self._data = ones((x, y), dtype=float)
+        self._data = ones((y, x), dtype=int)
         self._area = x * y
 
-    def set_all(self, v: float):
-        for x in self._data:
-            for y in x:
-                y = v
+    def set_all(self, v: int):
+        self._data[:] = v
 
     def area(self):
         return self.width * self.height
@@ -77,6 +76,9 @@ class MassMap(object):
 
     def y_mod(self, y: int):
         return y % self.height
+
+    def get_indeces(self, i: int):
+        return (i // self.height, i % self.width)
 
 
 class AgeMap(object):
@@ -84,19 +86,17 @@ class AgeMap(object):
         A class for constructing a matrix for age maps.
     '''
 
-    def __init__(self, x: int, y: int):
+    def __init__(self, y: int, x: int):
         if x == 0 or y == 0:
             assert(x == 0 or y == 0), 'width and height of {} should be greater than 0'.format(
                 self.__class__.__name__)
         self.width = x
         self.height = y
-        self._data = ones((x, y), dtype=int)
+        self._data = ones((y, x), dtype=int)
         self._area = x * y
 
     def set_all(self, v: int):
-        for x in self._data:
-            for y in x:
-                y = v
+        self._data[:] = v
 
     def area(self):
         return self.width * self.height
@@ -106,3 +106,6 @@ class AgeMap(object):
 
     def y_mod(self, y: int):
         return y % self.height
+
+    def get_indeces(self, i: int):
+        return (i // self.height, i % self.width)

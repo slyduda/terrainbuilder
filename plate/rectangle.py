@@ -17,6 +17,7 @@
 #  You should have received a copy of the GNU Lesser General Public
 #  License along with this library; if not, see http://www.gnu.org/licenses/
 #############################################################################
+import math
 
 
 class WorldDimension(object):
@@ -63,11 +64,10 @@ class WorldDimension(object):
         return self.index_of(0, y)
 
     def y_from_index(self, index: int):
-        return index / self.width
+        return math.floor(index / self.width)
 
     def x_from_index(self, index: int):
-        y = self.y_from_index(index)
-        return index - y * self.width
+        return index % self.width
 
     def normalized_index_of(self, x: int, y: int):
         return self.index_of(self.x_mod(x), self.y_mod(y))
@@ -100,12 +100,12 @@ class Rectangle(object):
         x = px % self.wd.get_width()
         y = py % self.wd.get_height()
 
-        ilft = self.left
-        itop = self.top
-        irgt = self.right + (self.wd.get_width()
-                             if self.right < self.left else 0)
-        ibtm = self.bottom + (self.wd.get_height()
-                              if self.bottom < self.top else 0)
+        ilft = int(self.left)
+        itop = int(self.top)
+        irgt = int(self.right) + (self.wd.get_width()
+                                  if self.right < ilft else 0)
+        ibtm = int(self.bottom) + (self.wd.get_height()
+                                   if self.bottom < itop else 0)
         width = irgt - ilft
 
         if width < 0:
@@ -124,6 +124,9 @@ class Rectangle(object):
         x += self.wd.get_width() if (x < ilft) else 0
         y += self.wd.get_height() if (y < itop) else 0
 
+        x -= ilft  # Calculate offset within local map.
+        y -= itop
+
         if x < 0:
             raise Exception("Failed because x is less than 0")
 
@@ -132,10 +135,52 @@ class Rectangle(object):
 
         if xOk and yOk:
             # px = x These were pointers
-            #py = y
+            # py = y
             return (y * width + x)
         else:
             return -1
+
+    def get_map_indeces(self, px: int, py: int):
+        x = px % self.wd.get_width()
+        y = py % self.wd.get_height()
+
+        ilft = int(self.left)
+        itop = int(self.top)
+        irgt = int(self.right) + (self.wd.get_width()
+                                  if self.right < ilft else 0)
+        ibtm = int(self.bottom) + (self.wd.get_height()
+                                   if self.bottom < itop else 0)
+        width = irgt - ilft
+
+        if width < 0:
+            raise Exception("Failed because width is less than zero")
+
+        xOkA = (x >= ilft) and (x < irgt)
+        xOkB = (x + self.wd.get_width() >=
+                ilft) and (x + self.wd.get_width() < irgt)
+        xOk = xOkA or xOkB
+
+        yOkA = (y >= itop) and (y < ibtm)
+        yOkB = (y + self.wd.get_height() >=
+                itop) and (y + self.wd.get_height() < ibtm)
+        yOk = yOkA or yOkB
+
+        x += self.wd.get_width() if (x < ilft) else 0
+        y += self.wd.get_height() if (y < itop) else 0
+
+        x -= ilft  # Calculate offset within local map.
+        y -= itop
+
+        if x < 0:
+            raise Exception("Failed because x is less than 0")
+
+        if y < 0:
+            raise Exception("Failed because y is less than 0")
+
+        if xOk and yOk:
+            return (x, y)
+        else:
+            return (-1, -1)
 
     def enlarge_to_contain(self, x: int, y: int):
         if y < self.top:

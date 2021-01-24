@@ -20,8 +20,8 @@
 
 
 from __future__ import annotations
-from numpy import pi, cos, sin, zeros, int32, sqrt
-from numpy.random import RandomState, SeedSequence
+from numpy import pi, cos, sin, zeros, int32, sqrt, nditer
+from numpy.random import RandomState, SeedSequence, MT19937
 from .maps import HeightMap, AgeMap, MassMap
 from .rectangle import WorldDimension, Rectangle
 
@@ -60,12 +60,13 @@ class Plate(object):
         self.cy = 0
         self.dx = 0
         self.dy = 0
-        self.map = HeightMap(w, h)
-        self.age_map = AgeMap(w, h)
+        self.map = HeightMap(h, w)
+        self.age_map = AgeMap(h, w)
         self.wd = wd
 
         plate_area = w * h
-        self.segment = zeros(plate_area)
+        self.segment = zeros(plate_area, dtype=int)
+        self.segment[:] = 255
         self.seg_data = []
 
         angle = 2 * pi * self._randstate.random_sample()  # ?
@@ -75,21 +76,22 @@ class Plate(object):
         self.velocity = 1
         self.rot_dir = -1 if (self._randstate.randint(2) == 0) else 1
 
-        for y in range(self.left):
-            for x in range(self.top):
-                self.map._data[y, x] = m[y, x]
-                self.mass += m[y, x]
+        for y in range(self.height):
+            for x in range(self.width):
+                k = y * self.width + x
+                self.map._data[y, x] = m[k]
+                self.mass += m[k]
 
                 # Calculate center coordinates weighted by mass.
-                self.cx += x * m[y, x]
-                self.cy += y * m[y, x]
+                self.cx += x * m[k]
+                self.cy += y * m[k]
 
                 # Set the age of ALL points in this plate to same
                 # value. The right thing to do would be to simulate
                 # the generation of new oceanic crust as if the plate
                 # had been moving to its current direction until all
                 # plate's (oceanic) crust receive an age.
-                self.age_map._data[y, x] = plate_age & -(m[y, x] > 0)
+                self.age_map._data[y, x] = plate_age if m[k] > 0 else 0
 
         self.cx /= self.mass
         self.cy /= self.mass
@@ -121,12 +123,13 @@ class Plate(object):
         self.set_crust(x, y, self.get_crust(x, y) + z, time)
 
         index = self.get_map_index(x, y)
+        lx, ly = self.get_map_indeces(x, y)
 
         self.segment[index] = activeContinent
         data = self.seg_data[activeContinent]
 
         data.area += 1
-        data.enlarge_to_contain(x, y)
+        data.enlarge_to_contain(lx, ly)
 
     def add_crust_by_subduction(self, x: int, y: int, z: float, t: int, dx: float, dy: float):
         """Simulates subduction of oceanic plate under this plate.
@@ -144,38 +147,41 @@ class Plate(object):
             dx (float): Direction of the subducting plate (X).
             dy (float): Direction of the subducting plate (Y).
         """
-        index = self.get_map_index(x, y)
+        lx, ly = self.get_map_indeces(x, y)
 
         # Take vector difference only between plates that move more or less
         # to same direction. This makes subduction direction behave better.
 
         # Use of "this" pointer is not necessary, but it make code clearer.
         # Cursed be those who use "m_" prefix in member names! >(
-        dot = self.vx * self.dx + self.vy * self.dy
-        dx -= self.vx * (dot > 0)
-        dy -= self.vy * (dot > 0)
+        dot = self.vx * dx + self.vy * dy
+        dx -= self.vx * int(dot > 0)
+        dy -= self.vy * int(dot > 0)
 
         offset = self._randstate.random_sample()
-        offset *= offset * offset * \
-            (2 * (self._randstate.randint(1, int32) & 1) - 1)
-        self.dx = 10 * dx + 3 * offset
-        self.dy = 10 * dy + 3 * offset
+        offset_sign = 2 * (self._randstate.randint(1, high=2147483648) % 2) - 1
+        offset *= offset * offset * offset_sign
+        offset2 = self._randstate.random_sample()
+        offset_sign2 = 2 * \
+            (self._randstate.randint(1, high=2147483648) % 2) - 1
+        offset2 *= offset2 * offset2 * offset_sign2
+        dx = 10 * dx + 3 * offset
+        dy = 10 * dy + 3 * offset2
 
-        x = x + self.dx
-        y = y + self.dy
+        fx = lx + dx
+        fy = ly + dy
 
-        if self.width == self.wd.get_width():
-            x %= self.width
-        if self.height == self.wd.get_height():
-            y %= self.height
+        if fx < self.get_width() and fx >= 0 and fy < self.get_height() and fy >= 0:
+            fx = int(fx)
+            fy = int(fy)
 
-        if self.map._data[y, x] > 0:
-            t = (self.map._data[y, x] * self.age_map._data[y, x] +
-                 z * t) / (self.map._data[y, x] + z)
-            self.age_map._data[y, x] = t * (z > 0)
+            if self.map._data[fy, fx] > 0:
+                t = int(self.map._data[fy, fx] * self.age_map._data[fy, fx] +
+                        z * t) / (self.map._data[fy, fx] + z)
+                self.age_map._data[fy, fx] = t * int(z > 0)
 
-            self.map._data[y, x] += z
-            self.mass += z
+                self.map._data[fy, fx] += z
+                self.mass += z
 
     def aggregate_crust(self, p: Plate, wx: int, wy: int):
         """Add continental crust from this plate as part of other plate.
@@ -197,10 +203,8 @@ class Plate(object):
         Returns:
             (float): Amount of crust aggregated to destination plate.
         """
-        lx = int(wx)
-        ly = int(wy)
-
-        index = self.get_map_index(lx, ly)
+        index = self.get_map_index(wx, wy)
+        lx, ly = self.get_map_indeces(wx, wy)
         seg_id = self.segment[index]
 
         # This check forces the caller to do things in proper order!
@@ -220,7 +224,7 @@ class Plate(object):
         # attempts of aggregation would necessarily change nothing at all,
         # because the continent was removed from this plate earlier!
 
-        if self.seg_data[seg_id].is_empty():
+        if not self.seg_data[seg_id]:
             return 0.0   # Do not process empty continents.
 
         activeContinent = self.select_collision_segment(wx, wy)
@@ -239,11 +243,11 @@ class Plate(object):
         # Add all of the collided continent's crust to destination plate.
         y_start = self.seg_data[seg_id].get_top()
         y_end = self.seg_data[seg_id].get_bottom()
-        for y in range(y_start, y_end):
+        for y in range(y_start, y_end + 1):
 
             x_start = self.seg_data[seg_id].get_left()
             x_end = self.seg_data[seg_id].get_right()
-            for x in range(x_start, x_end):
+            for x in range(x_start, x_end + 1):
 
                 i = y * self.width + x
                 if self.segment[i] == seg_id and self.map._data[y, x] > 0:
@@ -295,14 +299,12 @@ class Plate(object):
         """
         coeff_rest = 0.0
 
-        apx = wx
-        apy = wy
-        bpx = wx
-        bpy = wy
         ap_dx, ap_dy, bp_dx, bp_dy, nx, ny = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
-        index = self.get_map_index(apx, apy)
-        p_index = p.get_map_index(bpx, bpy)
+        index = self.get_map_index(wx, wy)
+        apx, apy = self.get_map_indeces(wx, wy)
+        p_index = p.get_map_index(wx, wy)
+        bpx, bpy = p.get_map_indeces(wx, wy)
 
         # out of colliding map's bounds!
         assert(index < self.width * self.height), "Out of Map Bounds"
@@ -408,9 +410,6 @@ class Plate(object):
         """
         seg = self.get_continent_at(wx, wy)
 
-        count = 0
-        ratio = 0
-
         count = self.seg_data[seg].coll_count
         ratio = self.seg_data[seg].coll_count / (1 + self.seg_data[seg].area)
         # +1 avoids DIV with zero.
@@ -443,7 +442,8 @@ class Plate(object):
         """
         # Might fail
         index = self.get_map_index(x, y)
-        return self.map._data[y, x] if index < -1 else 0
+        lx, ly = self.get_map_indeces(x, y)
+        return self.map._data[ly, lx] if index < -1 else 0
 
     def get_crust_timestamp(self, x: int, y: int):
         """Get the timestamp of plate's crustal material at some location.
@@ -458,7 +458,8 @@ class Plate(object):
         """
         # Might fail
         index = self.get_map_index(x, y)
-        return self.age_map._data[y, x] if index < -1 else 0
+        lx, ly = self.get_map_indeces(x, y)
+        return self.age_map._data[ly, lx] if index < -1 else 0
 
     def get_map(self, c: bool = False, t: bool = False):
         """Get plate's data.
@@ -511,11 +512,11 @@ class Plate(object):
         assert(self.wd.contains(self.left, self.top))
 
         self.left += self.vx * self.velocity
-        self.left += 0 if self.left > 0 else self.wd.get_width()
+        self.left += 0 if self.left >= 0 else self.wd.get_width()
         self.left -= 0 if self.left < self.wd.get_width() else self.wd.get_width()
 
         self.top += self.vy * self.velocity
-        self.top += 0 if self.top > 0 else self.wd.get_height()
+        self.top += 0 if self.top >= 0 else self.wd.get_height()
         self.top -= 0 if self.top < self.wd.get_height() else self.wd.get_height()
 
         assert(self.wd.contains(self.left, self.top)
@@ -535,6 +536,8 @@ class Plate(object):
         bookkeeping and start clean.
         """
         self.seg_data.clear()
+        self.segment = zeros(self.width * self.height, dtype=int)
+        self.segment[:] = 255
         return
 
     def select_collision_segment(self, coll_x: int, coll_y: int):
@@ -566,16 +569,17 @@ class Plate(object):
             z = 0
 
         index = self.get_map_index(x, y)
+        lx, ly = self.get_map_indeces(x, y)
 
         if index >= self.width * self.height:
             assert(z > 0)
 
-            ilft = self.left
-            itop = self.top
+            ilft = int(self.left)
+            itop = int(self.top)
             irgt = ilft + self.width - 1
             ibtm = itop + self.height - 1
 
-            self.wd.normalize(x, y)
+            x, y = self.wd.normalize(x, y)
 
             # Might need update. I believe it is a bool to int conversion
             _lft = ilft - x
@@ -607,11 +611,13 @@ class Plate(object):
             old_height = self.height
 
             self.left -= d_lft
-            self.left += 0 if (self.left >= 0) else self.wd.get_width()
+            self.left += 0 if self.left >= 0 else self.wd.get_width()
+            self.left -= 0 if self.left < self.wd.get_width() else self.wd.get_width()
             self.width += d_lft + d_rgt
 
             self.top -= d_top
-            self.top += 0 if (self.top >= 0) else self.wd.get_height()
+            self.top += 0 if self.top >= 0 else self.wd.get_height()
+            self.top -= 0 if self.top < self.wd.get_height() else self.wd.get_height()
             self.height += d_top + d_btm
 
             tmph = HeightMap(self.width, self.height)
@@ -632,22 +638,20 @@ class Plate(object):
             for s in range(len(self.seg_data)):
                 self.seg_data[s].shift(d_lft, d_top)
 
-            _x = x
-            _y = y
-            index = self.get_map_index(x, y)
-
             assert(index < self.width * self.height)
 
-        old_crust = -(self.map._data[y, x] > 0)
-        new_crust = -(z > 0)
+        # Update crust's age.
+        old_crust = self.map._data[ly, lx] > 0
+        new_crust = z > 0
+        # If old crust exists create new t with the mean of original and supplied
+        if old_crust:
+            t = int((self.map._data[ly, lx] * self.age_map._data[ly, lx] +
+                     z * t) / (self.map._data[ly, lx] + z))
+        if new_crust:
+            self.age_map._data[ly, lx] = t
 
-        t = (t & ~old_crust) | (
-            ((self.map._data[y, x] * self.age_map._data[y, x] + z * t) / (self.map._data[y, x] + z)) & old_crust)
-        self.age_map._data[y, x] = (t & new_crust) | (
-            self.age_map._data[y, x] & ~new_crust)
-
-        self.mass -= self.map._data[y, x]
-        self.map._data[y, x] = z
+        self.mass -= self.map._data[ly, lx]
+        self.map._data[ly, lx] = z
         self.mass += z
 
     def get_mass(self):
@@ -785,6 +789,68 @@ class Plate(object):
             """
             return (self.area == 0)
 
+    def calc_direction(self, x: int, y: int, origin_index: int, ID: int):
+
+        if self.segment[origin_index] < ID:
+            return self.segment[origin_index]
+
+        can_go_left = x > 0
+        if can_go_left:
+            can_go_left = self.map._data[y, x - 1] >= CONT_BASE
+        can_go_right = x < self.width - 1
+        if can_go_right:
+            can_go_right = self.map._data[y, x + 1] >= CONT_BASE
+        can_go_up = y > 0
+        if can_go_up:
+            can_go_up = self.map._data[y - 1, x] >= CONT_BASE
+        can_go_down = y < self.height - 1
+        if can_go_down:
+            can_go_down = self.map._data[y + 1, x] >= CONT_BASE
+        nbour_id = ID
+
+        if can_go_left and self.segment[origin_index - 1] < ID:
+            nbour_id = self.segment[origin_index - 1]
+        elif can_go_right and self.segment[origin_index + 1] < ID:
+            nbour_id = self.segment[origin_index + 1]
+        elif can_go_up and self.segment[origin_index - self.width] < ID:
+            nbour_id = self.segment[origin_index - self.width]
+        elif can_go_down and self.segment[origin_index + self.width] < ID:
+            nbour_id = self.segment[origin_index + self.width]
+
+        return nbour_id
+
+    def scan_spans(self, line, start, end, spans_todo, spans_done):
+        while True:
+            end = spans_todo[line].pop()
+            start = spans_todo[line].pop()
+
+            j = 0
+            for temp in range(len(spans_done[line])):
+
+                if (start >= spans_done[line][j] and start <= spans_done[line][j+1]):
+                    start = spans_done[line][j+1] + 1
+
+                if (end >= spans_done[line][j] and end <= spans_done[line][j+1]):
+                    end = spans_done[line][j] - 1
+
+                j += 2
+
+                # Be careful with this because it was changed
+                # The exit statement for the while loop
+                if j >= len(spans_done[line]):
+                    break
+
+            # This is still confusing
+            start = start | -int(end >= self.width)
+            end = end - int(end >= self.width)
+
+            # Be careful with this because it was changed
+            # The exit statement for the while loop
+            if not start > end or not len(spans_todo[line]):
+                break
+
+        return (start, end, spans_todo, spans_done)
+
     def create_segment(self, x: int, y: int):
         """NEEDS THOROUGH REVIEW
         Separate a continent at (X, Y) to its own partition.
@@ -802,25 +868,7 @@ class Plate(object):
         origin_index = y * self.width + x
         ID = len(self.seg_data)
 
-        if self.segment[origin_index] < ID:
-            return self.segment[origin_index]
-
-        can_go_left = x > 0 and self.map._data[y, x - 1] >= CONT_BASE
-        can_go_right = x < self.width - \
-            1 and self.map._data[y, x + 1] >= CONT_BASE
-        can_go_up = y > 0 and self.map._data[y - 1, x] >= CONT_BASE
-        can_go_down = y < self.height - \
-            1 and self.map._data[y + 1, x] >= CONT_BASE
-        nbour_id = ID
-
-        if can_go_left and self.segment[origin_index - 1] < ID:
-            nbour_id = self.segment[origin_index - 1]
-        elif can_go_right and self.segment[origin_index + 1] < ID:
-            nbour_id = self.segment[origin_index + 1]
-        elif can_go_up and self.segment[origin_index - self.width] < ID:
-            nbour_id = self.segment[origin_index - self.width]
-        elif can_go_down and self.segment[origin_index + self.width] < ID:
-            nbour_id = self.segment[origin_index + self.width]
+        nbour_id = self.calc_direction(x, y, origin_index, ID)
 
         if nbour_id < ID:
             self.segment[origin_index] = nbour_id
@@ -837,143 +885,131 @@ class Plate(object):
         spans_todo[y].append(x)
         spans_todo[y].append(x)  # Why is this performed twice?
 
-        lines_processed = 0
-        while True:
+        lines_processed = -1
+        while lines_processed != 0:
+            lines_processed = 0
+            start = 0
+            end = 0
             for line in range(self.height):
-                start = 0
-                end = 0
 
-                if len(spans_todo[0]) == 0:
+                if len(spans_todo[line]) == 0:
                     continue
 
-                while True:
-                    end = spans_todo[line].pop()
-                    spans_todo[line].pop_back()
+                start, end, spans_todo, spans_done = self.scan_spans(
+                    line, start, end, spans_todo, spans_done)
 
-                    start = spans_todo[line].back()
-                    spans_todo[line].pop_back()
+                if start > end:
+                    continue
 
-                    j = 0
-                    for temp in range(len(spans_done[line])):
+                row_above = line - 1 if line > 0 else self.height - 1
+                row_below = line + 1 if line < self.height - 1 else 0
 
-                        if (start >= spans_done[line][j] and start <= spans_done[line][j+1]):
-                            start = spans_done[line][j+1] + 1
+                line_here = line * self.width
+                line_above = row_above * self.width
+                line_below = row_below * self.width
 
-                        if (end >= spans_done[line][j] and end <= spans_done[line][j+1]):
-                            end = spans_done[line][j] - 1
+                # Extend the beginning of line
+                while start > 0 \
+                        and self.segment[line_here + start - 1] > ID \
+                        and self.map._data[line, start - 1] >= CONT_BASE:
+                    start -= 1
+                    self.segment[line_here + start] = ID
+                    # Count volume of pixel
 
-                        j += 2
+                #  Extend the end of line.
+                while end < self.width - 1 \
+                        and self.segment[line_here + end + 1] > ID \
+                        and self.map._data[line, end + 1] >= CONT_BASE:
+                    end += 1
+                    self.segment[line_here + end] = ID
+                    # Count volume of pixel
 
-                        # Be careful with this because it was changed
-                        # The exit statement for the while loop
-                        if j >= len(spans_done[line]):
-                            break
+                # Check if should wrap around left edge.
+                if self.width == self.wd.get_width() \
+                        and start == 0 \
+                        and self.segment[line_here + self.width - 1] > ID \
+                        and self.map._data[line, self.width - 1] >= CONT_BASE:
+                    self.segment[line_here + self.width - 1] = ID
+                    spans_todo[line].append(self.width - 1)
+                    spans_todo[line].append(self.width - 1)
+                    # Count volume of pixel
 
-                    # This is still confusing
-                    start = start or -(end >= self.width)
-                    end = end - (end >= self.width)
+                # Check if should wrap around right edge.
+                if self.width == self.wd.get_width() \
+                        and end == self.width - 1 \
+                        and self.segment[line_here + 0] > ID \
+                        and self.map._data[line, 0] >= CONT_BASE:
+                    self.segment[line_here + 0] = ID
+                    spans_todo[line].append(0)
+                    spans_todo[line].append(0)
 
-                    # Be careful with this because it was changed
-                    # The exit statement for the while loop
-                    if not start > end or not len(spans_todo[line]):
-                        break
+                # Update segment area counter
+                data.area += 1 + end - start
 
-            if start > end:
-                continue
+                # Record any changes in extreme dimensions.
+                if line < data.get_top():
+                    data.set_top(line)
+                if line > data.get_bottom():
+                    data.set_bottom(line)
+                if start < data.get_left():
+                    data.set_left(start)
+                if end > data.get_right():
+                    data.set_right(end)
 
-            row_above = ((line - 1) and -(line > 0)
-                         ) or ((self.height - 1) & -(line == 0))
-            row_below = (line + 1) and -(line < self.height - 1)
-            line_here = line * self.width
-            line_above = row_above * self.width
-            line_below = row_below * self.width
+                if line > 0 \
+                        or self.height == self.wd.get_height():
 
-            # Extend the beginning of line
-            while start > 0 and self.segment[line_here+start-1] > ID and self.map._data[line_here, start - 1] >= CONT_BASE:
-                start -= 1
-                self.segment[line_here + start] = ID
-                # Count volume of pixel
-
-            #  Extend the end of line.
-            while end < self.width - 1 and self.segment[line_here + end + 1] > ID and self.map._data[line_here, end + 1] >= CONT_BASE:
-                end -= 1
-                self.segment[line_here + end] = ID
-                # Count volume of pixel
-
-            # Check if should wrap around left edge.
-            if self.width == self.wd.getWidth() and start == 0 and self.segment[line_here, self.width-1] > ID and self.map._data[line_here, self.width - 1] >= CONT_BASE:
-                self.segment[line_here + self.width - 1] = ID
-                spans_todo[line].append(self.width - 1)
-                spans_todo[line].append(self.width - 1)
-                # Count volume of pixel
-
-            # Check if should wrap around right edge.
-            if self.width == self.wd.getWidth() and end == self.width - 1 and self.segment[line_here+0] > ID and self.map._data[line_here, 0] >= CONT_BASE:
-                self.segment[line_here + 0] = ID
-                spans_todo[line].append(0)
-                spans_todo[line].append(0)
-
-            # Update segment area counter
-            data.area += 1 + end - start
-
-            # Record any changes in extreme dimensions.
-            if line < data.get_top():
-                data.set_top(line)
-            if line > data.get_bottom():
-                data.set_bottom(line)
-            if start < data.get_left():
-                data.set_left(start)
-            if end > data.get_right():
-                data.set_right(end)
-
-            if line > 0 or self.height == self.wd.get_height():
-
-                for j in range(start, end):
-
-                    if self.segment[line_above + j] > ID and self.map._data[line_above, j] >= CONT_BASE:
-                        a = j
-                        self.segment[line_above + a] = ID
-                        # Count volume of pixel
-
-                        while j + 1 < self.width and self.segment[line_above + j] > ID and self.map._data[line_above, j] >= CONT_BASE:
-                            self.segment[line_above + j] = ID
+                    j = int(start)
+                    while j <= end:
+                        if self.segment[line_above + j] > ID \
+                                and self.map._data[row_above, j] >= CONT_BASE:
+                            a = int(j)
+                            self.segment[line_above + a] = ID
                             # Count volume of pixel
 
-                        # Last point is invalid.
-                        b = j - 1
+                            j += 1
+                            while j < self.width \
+                                    and self.segment[line_above + j] > ID \
+                                    and self.map._data[row_above, j] >= CONT_BASE:
+                                self.segment[line_above + j] = ID
+                                j += 1
+                                # Count volume of pixel
 
-                        spans_todo[row_above].append(a)
-                        spans_todo[row_above].append(b)
-                        j += 1  # This shouldnt work
-                        # Skip the last scanned point.
+                            b = int(j - 1)
+                            spans_todo[row_above].append(a)
+                            spans_todo[row_above].append(b)
+                        else:
+                            j += 1
 
-            if line < self.height - 1 or self.height == self.wd.get_height():
-                for j in range(start, end):
-                    if self.segment[line_below + j] > ID and self.map._data[line_below, j] >= CONT_BASE:
-                        a = j
-                        self.segment[line_below + a] = ID
-                        # Count volume of pixel
+                if line < self.height - 1 \
+                        or self.height == self.wd.get_height():
 
-                        while j + 1 < self.width and self.segment[line_below + j] > ID and self.map._data[line_below, j] >= CONT_BASE:
-                            self.segment[line_below + j] = ID
+                    j = int(start)
+                    while j <= end:
+                        if self.segment[line_below + j] > ID \
+                                and self.map._data[row_below, j] >= CONT_BASE:
+                            a = int(j)
+                            self.segment[line_below + a] = ID
                             # Count volume of pixel
 
-                        # Last point is invalid.
-                        b = j - 1
+                            j = j + 1
+                            while j < self.width \
+                                    and self.segment[line_below + j] > ID \
+                                    and self.map._data[row_below, j] >= CONT_BASE:
+                                self.segment[line_below + j] = ID
+                                j += 1
+                                # Count volume of pixel
 
-                        spans_todo[row_below].append(a)
-                        spans_todo[row_below].append(b)
-                        j += 1  # This shouldnt work
-                        # Skip the last scanned point.
+                            # Last point is invalid.
+                            b = int(j - 1)
+                            spans_todo[row_below].append(a)
+                            spans_todo[row_below].append(b)
+                        else:
+                            j += 1
 
-            spans_done[line].append(start)
-            spans_done[line].append(end)
-            lines_processed += 1
-
-            # Be careful with this because it was changed
-            # The exit statement for the while loop
-            if not lines_processed > 0:
-                break
+                spans_done[line].append(start)
+                spans_done[line].append(end)
+                lines_processed += 1
 
         self.seg_data.append(data)
 
@@ -994,19 +1030,41 @@ class Plate(object):
         Returns:
             int: Offset in height map or -1 on error.
         """
-        ilft = self.left
-        itop = self.top
+        ilft = int(self.left)
+        itop = int(self.top)
         irgt = ilft + self.width
         ibtm = itop + self.height
 
         rect = Rectangle(self.wd, ilft, irgt, itop, ibtm)
         return rect.get_map_index(px, py)
 
+    def get_map_indeces(self, px: int, py: int):
+        """Translate world coordinates into offset within plate's height map.
+
+        If the global world map coordinates are within plate's height map,
+        the values of passed coordinates will be altered to contain the
+        X and y offset within the plate's height map. Otherwise values are
+        left intact.
+
+        Args:
+            px (int): Offset on the global world map along X axis.
+            py (int): Offset on the global world map along Y axis.
+
+        Returns:
+            int: Offset in height map or -1 on error.
+        """
+        ilft = int(self.left)
+        itop = int(self.top)
+        irgt = ilft + self.width
+        ibtm = itop + self.height
+
+        rect = Rectangle(self.wd, ilft, irgt, itop, ibtm)
+        return rect.get_map_indeces(px, py)
+
     def get_continent_at(self, x: int, y: int):
-        lx = x
-        ly = y
         # Need to convert this function to a class method.
-        index = self.get_map_index(lx, ly)
+        index = int(self.get_map_index(x, y))
+        lx, ly = self.get_map_indeces(x, y)
         seg = self.segment[index]
 
         if seg >= len(self.seg_data):
